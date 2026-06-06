@@ -1,0 +1,452 @@
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting   = game:GetService("Lighting")
+
+local camera      = workspace.CurrentCamera
+local localPlayer = Players.LocalPlayer
+
+-- ============================================================
+--  WindUI
+-- ============================================================
+local ui = loadstring(game:HttpGet(
+    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+))()
+
+-- ============================================================
+--  Speed
+-- ============================================================
+local speedHack     = { on = false, speed = 18 }
+local speedConn     = nil
+
+local function speedLoop()
+    if speedConn then speedConn:Disconnect() end
+    speedConn = RunService.Heartbeat:Connect(function()
+        if not speedHack.on then
+            speedConn:Disconnect()
+            speedConn = nil
+            return
+        end
+        local char = localPlayer.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.WalkSpeed ~= speedHack.speed then
+            hum.WalkSpeed = speedHack.speed
+        end
+    end)
+end
+
+localPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if speedHack.on then speedLoop() end
+end)
+
+-- ============================================================
+--  Fullbright
+-- ============================================================
+local fullbright = { on = false }
+local origLighting = {}
+
+local function saveOrigLighting()
+    origLighting.Ambient            = Lighting.Ambient
+    origLighting.OutdoorAmbient     = Lighting.OutdoorAmbient
+    origLighting.Brightness         = Lighting.Brightness
+    origLighting.FogEnd             = Lighting.FogEnd
+    origLighting.GlobalShadows      = Lighting.GlobalShadows
+end
+
+local function applyFullbright()
+    Lighting.Ambient        = Color3.fromRGB(255, 255, 255)
+    Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+    Lighting.Brightness     = 10
+    Lighting.FogEnd         = 100000
+    Lighting.GlobalShadows  = false
+    -- Disable any atmosphere/blur effects
+    for _, e in ipairs(Lighting:GetChildren()) do
+        if e:IsA("Atmosphere") or e:IsA("BlurEffect") or e:IsA("ColorCorrectionEffect") then
+            e.Enabled = false
+        end
+    end
+end
+
+local function removeFullbright()
+    Lighting.Ambient        = origLighting.Ambient
+    Lighting.OutdoorAmbient = origLighting.OutdoorAmbient
+    Lighting.Brightness     = origLighting.Brightness
+    Lighting.FogEnd         = origLighting.FogEnd
+    Lighting.GlobalShadows  = origLighting.GlobalShadows
+    for _, e in ipairs(Lighting:GetChildren()) do
+        if e:IsA("Atmosphere") or e:IsA("BlurEffect") or e:IsA("ColorCorrectionEffect") then
+            e.Enabled = true
+        end
+    end
+end
+
+saveOrigLighting()
+
+-- ============================================================
+--  Noclip
+-- ============================================================
+local noclip = { on = false }
+local noclipConn = nil
+
+local function noclipLoop()
+    if noclipConn then noclipConn:Disconnect() end
+    noclipConn = RunService.Stepped:Connect(function()
+        if not noclip.on then
+            noclipConn:Disconnect()
+            noclipConn = nil
+            return
+        end
+        local char = localPlayer.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+-- ============================================================
+--  Anti-Entity
+-- ============================================================
+local antiEntity = { on = false, distance = 40, pushDistance = 60 }
+local antiEntityConn = nil
+
+local function antiEntityLoop()
+    if antiEntityConn then antiEntityConn:Disconnect() end
+    antiEntityConn = RunService.Heartbeat:Connect(function()
+        if not antiEntity.on then
+            antiEntityConn:Disconnect()
+            antiEntityConn = nil
+            return
+        end
+        local char = localPlayer.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local entities = workspace:FindFirstChild("Entities")
+        if not entities then return end
+
+        for _, entity in ipairs(entities:GetChildren()) do
+            if entity:IsA("Model") then
+                local root = entity.PrimaryPart or entity:FindFirstChildWhichIsA("BasePart")
+                if root then
+                    local dist = (hrp.Position - root.Position).Magnitude
+                    if dist < antiEntity.distance then
+                        -- Push player away from entity
+                        local dir = (hrp.Position - root.Position).Unit
+                        hrp.CFrame = CFrame.new(hrp.Position + dir * antiEntity.pushDistance)
+                        ui:Notify({ Title = "Anti-Entity", Content = "Teleported away!", Icon = "shield", Duration = 2 })
+                        break
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- ============================================================
+--  ESP (Highlight-based)
+-- ============================================================
+local espTargets = {}
+local esp = { enabled = true, tracers = true, monsters = true }
+
+local CFG = {
+    Monster = { Fill = Color3.fromRGB(255, 50,  50),  Outline = Color3.fromRGB(255, 50,  50),  Text = Color3.fromRGB(255, 100, 100), FillTrans = 0.6 },
+    Key     = { Fill = Color3.fromRGB(0,  255,  0),   Outline = Color3.fromRGB(0,  255,  0),   Text = Color3.fromRGB(0,  255,  0),   FillTrans = 0.6 },
+    Valve   = { Fill = Color3.fromRGB(0,  100, 255),  Outline = Color3.fromRGB(0,  100, 255),  Text = Color3.fromRGB(0,  100, 255),  FillTrans = 0.6 },
+}
+
+local function newHighlight(cfg, adornee)
+    local h = Instance.new("Highlight")
+    h.FillColor           = cfg.Fill
+    h.OutlineColor        = cfg.Outline
+    h.FillTransparency    = cfg.FillTrans
+    h.OutlineTransparency = 0
+    h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+    h.Adornee             = adornee
+    h.Parent              = adornee
+    return h
+end
+
+local function newLine(color)
+    local l = Drawing.new("Line")
+    l.Visible = false; l.Color = color; l.Thickness = 1; l.Transparency = 1
+    return l
+end
+
+local function newText(color)
+    local t = Drawing.new("Text")
+    t.Visible = false; t.Color = color; t.Size = 13
+    t.Center = true; t.Outline = true; t.OutlineColor = Color3.new(0,0,0); t.Transparency = 1
+    return t
+end
+
+local function destroyESP(d)
+    if d.Highlight and d.Highlight.Parent then d.Highlight:Destroy() end
+    d.Tracer:Remove()
+    d.NameText:Remove()
+    d.DistText:Remove()
+end
+
+local function hasESP(obj)
+    for _, d in ipairs(espTargets) do
+        if d.Instance == obj then return true end
+    end
+    return false
+end
+
+local function applyESP(obj, cfg, label, isMonster)
+    table.insert(espTargets, {
+        Instance  = obj,
+        IsMonster = isMonster,
+        BaseName  = label or obj.Name,
+        Distance  = math.huge,
+        Highlight = newHighlight(cfg, obj),
+        Tracer    = newLine(cfg.Outline),
+        NameText  = newText(cfg.Text),
+        DistText  = newText(Color3.new(1, 1, 1)),
+    })
+end
+
+local function removeESPByObj(obj)
+    for i, d in ipairs(espTargets) do
+        if d.Instance == obj then
+            destroyESP(d)
+            table.remove(espTargets, i)
+            break
+        end
+    end
+end
+
+-- ============================================================
+--  ESP Setup Functions
+-- ============================================================
+local function setupMonsterESP()
+    local entities = workspace:FindFirstChild("Entities")
+    if not entities then return end
+    local function add(obj)
+        if obj:IsA("Model") and not hasESP(obj) then
+            applyESP(obj, CFG.Monster, obj.Name, true)
+        end
+    end
+    for _, o in ipairs(entities:GetChildren()) do add(o) end
+    entities.ChildAdded:Connect(function(o) task.wait(0.1); add(o) end)
+    entities.ChildRemoved:Connect(function(o) removeESPByObj(o) end)
+end
+
+local function setupKeyESP()
+    local interacts = workspace:FindFirstChild("Ignored") and workspace.Ignored:FindFirstChild("Interacts")
+    if not interacts then return end
+    local function add(obj)
+        if obj.Name == "key" and not hasESP(obj) then
+            applyESP(obj, CFG.Key, "KEY", false)
+        end
+    end
+    for _, o in ipairs(interacts:GetDescendants()) do add(o) end
+    interacts.DescendantAdded:Connect(function(o) task.wait(0.1); add(o) end)
+end
+
+local function setupValveESP()
+    local interacts = workspace:FindFirstChild("Ignored") and workspace.Ignored:FindFirstChild("Interacts")
+    if not interacts then return end
+    local function add(obj)
+        if obj.Name == "valve" and obj:IsA("MeshPart") and not hasESP(obj) then
+            applyESP(obj, CFG.Valve, "VALVE", false)
+        end
+    end
+    for _, o in ipairs(interacts:GetDescendants()) do add(o) end
+    interacts.DescendantAdded:Connect(function(o) task.wait(0.1); add(o) end)
+end
+
+-- ============================================================
+--  RenderStepped — tracers + labels
+-- ============================================================
+RunService.RenderStepped:Connect(function()
+    local vpSize       = camera.ViewportSize
+    local tracerOrigin = Vector2.new(vpSize.X / 2, vpSize.Y)
+    local char = localPlayer.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    local valid = {}
+
+    for _, data in ipairs(espTargets) do
+        if not (data.Instance and data.Instance.Parent) then
+            destroyESP(data)
+        else
+            local root = data.Instance
+            if data.Instance:IsA("Model") then
+                root = data.Instance.PrimaryPart
+                    or data.Instance:FindFirstChildWhichIsA("BasePart")
+                    or data.Instance
+            end
+
+            local showThis = esp.enabled and (data.IsMonster and esp.monsters or not data.IsMonster)
+            data.Highlight.Enabled = showThis
+
+            if root and root:IsA("BasePart") then
+                if hrp then
+                    data.Distance = math.floor((hrp.Position - root.Position).Magnitude)
+                end
+
+                if showThis then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(root.Position)
+                    if onScreen then
+                        data.Tracer.From    = tracerOrigin
+                        data.Tracer.To      = Vector2.new(screenPos.X, screenPos.Y)
+                        data.Tracer.Visible = esp.tracers
+                        data.NameText.Text     = data.BaseName
+                        data.NameText.Position = Vector2.new(screenPos.X, screenPos.Y - 20)
+                        data.NameText.Visible  = true
+                        data.DistText.Text     = data.Distance .. "m"
+                        data.DistText.Position = Vector2.new(screenPos.X, screenPos.Y + 4)
+                        data.DistText.Visible  = true
+                    else
+                        data.Tracer.Visible   = false
+                        data.NameText.Visible = false
+                        data.DistText.Visible = false
+                    end
+                else
+                    data.Tracer.Visible   = false
+                    data.NameText.Visible = false
+                    data.DistText.Visible = false
+                end
+            end
+            table.insert(valid, data)
+        end
+    end
+    espTargets = valid
+end)
+
+-- ============================================================
+--  Window Configuration
+-- ============================================================
+local win = ui:CreateWindow({
+    Title       = "Apeirphobia [BETA]",
+    Author      = "By Mitsuki",
+    Folder      = "BackroomsESP",
+    Size        = UDim2.fromOffset(480, 520),
+    MinSize     = Vector2.new(400, 400),
+    Transparent = true,
+    Resizable   = true,
+    Theme       = "Dark",
+})
+
+win:SetToggleKey(Enum.KeyCode.RightShift)
+
+-- ============================================================
+--  Consolidated Main Tab & Section
+-- ============================================================
+local tabMain = win:Tab({ Title = "Main", Icon = "terminal" })
+local secMain = tabMain:Section({ Title = "Main Controls", Opened = true })
+
+-- --- ESP Controls ---
+secMain:Toggle({
+    Title    = "Enable ESP",
+    Type     = "Checkbox",
+    Flag     = "espEnabled",
+    Default  = true,
+    Callback = function(on) esp.enabled = on end,
+})
+
+secMain:Toggle({
+    Title    = "Monster ESP",
+    Type     = "Checkbox",
+    Flag     = "espMonsters",
+    Default  = true,
+    Callback = function(on) esp.monsters = on end,
+})
+
+secMain:Toggle({
+    Title    = "Show Tracers",
+    Type     = "Checkbox",
+    Flag     = "espTracers",
+    Default  = true,
+    Callback = function(on) esp.tracers = on end,
+})
+
+-- --- Speed Controls ---
+secMain:Toggle({
+    Title    = "Speed Hack",
+    Type     = "Checkbox",
+    Flag     = "speedOn",
+    Default  = false,
+    Callback = function(on)
+        speedHack.on = on
+        if on then
+            speedLoop()
+        else
+            if speedConn then speedConn:Disconnect(); speedConn = nil end
+            local char = localPlayer.Character
+            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = 10 end
+        end
+    end,
+})
+
+secMain:Slider({
+    Title    = "Walk Speed",
+    Flag     = "speedVal",
+    Step     = 1,
+    Value    = { Min = 8, Max = 100, Default = 18 },
+    Callback = function(v) speedHack.speed = v end,
+})
+
+-- --- Environment / Misc Controls ---
+secMain:Toggle({
+    Title    = "Fullbright",
+    Type     = "Checkbox",
+    Flag     = "fullbright",
+    Default  = false,
+    Callback = function(on)
+        fullbright.on = on
+        if on then applyFullbright() else removeFullbright() end
+    end,
+})
+
+secMain:Toggle({
+    Title    = "Noclip",
+    Type     = "Checkbox",
+    Flag     = "noclip",
+    Default  = false,
+    Callback = function(on)
+        noclip.on = on
+        if on then noclipLoop() end
+    end,
+})
+
+-- --- Anti-Entity Controls ---
+secMain:Toggle({
+    Title    = "Anti-Entity",
+    Type     = "Checkbox",
+    Flag     = "antiEntity",
+    Default  = false,
+    Callback = function(on)
+        antiEntity.on = on
+        if on then antiEntityLoop() end
+    end,
+})
+
+secMain:Slider({
+    Title    = "Trigger Distance",
+    Flag     = "antiEntityDist",
+    Step     = 5,
+    Value    = { Min = 10, Max = 100, Default = 40 },
+    Callback = function(v) antiEntity.distance = v end,
+})
+
+secMain:Slider({
+    Title    = "Push Distance",
+    Flag     = "antiEntityPush",
+    Step     = 5,
+    Value    = { Min = 20, Max = 150, Default = 60 },
+    Callback = function(v) antiEntity.pushDistance = v end,
+})
+
+-- ============================================================
+--  Init
+-- ============================================================
+setupMonsterESP()
+setupKeyESP()
+setupValveESP()
+
+ui:Notify({ Title = "Backrooms ESP", Content = "Loaded! RightShift to toggle UI", Icon = "ghost", Duration = 4 })
